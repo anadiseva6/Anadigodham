@@ -4,8 +4,8 @@
    active. This one just caches the app shell so the page can reopen if the
    network briefly drops; it does not try to cache every asset. */
 
-const CACHE_NAME = 'anadi-godham-shell-v1';
-const SHELL_URL = './customer.html'; // <-- rename this to your real deployed html filename
+const CACHE_NAME = 'anadi-godham-shell-v2';
+const SHELL_URL = '/index.html';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
