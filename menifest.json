@@ -1,18 +1,13 @@
 {
-  "name": "Anadi Godham — Farm Fresh, Daily Delivered",
+  "name": "Anadi Godham",
   "short_name": "Anadi Godham",
-  "description": "Farm fresh dairy, pooja items, gifts and breakfast — ordered and delivered daily.",
-  "start_url": "./index.html",
+  "description": "Purity Means Anadi Godham",
+  "start_url": "./customer.html",
   "scope": "./",
-  "id": "./index.html",
   "display": "standalone",
-  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "portrait",
-  "background_color": "#0E2A1C",
+  "background_color": "#F8F7F4",
   "theme_color": "#0E2A1C",
-  "dir": "ltr",
-  "lang": "en",
-  "categories": ["food", "shopping", "grocery"],
   "icons": [
     {
       "src": "https://anadi.co.in/wp-content/uploads/2024/10/WhatsApp_Image_2024-10-06_at_3.59.51_AM-removebg-preview.png",
@@ -37,19 +32,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    }
-  ],
-  "shortcuts": [
-    {
-      "name": "My Orders",
-      "short_name": "Orders",
-      "url": "./index.html#orders",
-      "icons": [
-        {
-          "src": "https://anadi.co.in/wp-content/uploads/2024/10/WhatsApp_Image_2024-10-06_at_3.59.51_AM-removebg-preview.png",
-          "sizes": "192x192"
-        }
-      ]
     }
   ]
 }
