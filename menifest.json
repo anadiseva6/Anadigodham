@@ -1,20 +1,23 @@
 {
-  "name": "Anadi Godham — Farm Fresh, Daily Delivered",
+  "name": "Anadi Godham",
   "short_name": "Anadi Godham",
-  "description": "Order farm-fresh dairy and daily essentials with scheduled delivery.",
-  "start_url": "/customerapp.html",
-  "id": "/customerapp.html",
-  "scope": "/",
+  "start_url": "./index.html",
   "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
   "orientation": "portrait",
-  "background_color": "#F8F7F4",
-  "theme_color": "#0E2A1C",
-  "lang": "en",
-  "dir": "ltr",
-  "icons": [
-    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
-    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+ "icons": [
+    {
+      "src": "https://anadisevaprakalp.org/wp-content/uploads/elementor/thumbs/anadi-farm-logo-2nd-copy-png-f-pf3gkbrok4it2hn25dsym3ek5sdjquv18uov85lvww.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://anadisevaprakalp.org/wp-content/uploads/elementor/thumbs/anadi-farm-logo-2nd-copy-png-f-pf3gkbrok4it2hn25dsym3ek5sdjquv18uov85lvww.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
   ]
 }
