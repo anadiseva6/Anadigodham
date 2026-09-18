@@ -3014,6 +3014,69 @@ let trackBoyMarker = null;
 let mapAutoFollow = true;
 let trackDestMarker = null;
 
+/* ---- Real road-following route (replaces the old straight-line guess) ----
+   Uses OSRM's free public routing API (no key needed) to fetch an actual
+   road path between the delivery partner and the customer, so the dashed
+   line on the map follows real streets instead of cutting through
+   buildings. Re-fetched only when the partner has moved a meaningful
+   distance since the last fetch, and throttled by time too, so a GPS
+   ping every few seconds doesn't hammer the routing server. */
+const ROUTE_API_BASE = 'https://router.project-osrm.org/route/v1/driving/';
+const ROUTE_REFETCH_MS = 15000;      // don't re-fetch more than once every 15s
+const ROUTE_REFETCH_KM = 0.06;       // ...unless the partner moved >60m since the last fetch
+let routeFetchInFlight = false;
+let routeLastFetchAt = 0;
+let routeLastFetchPos = null;        // {lat,lng} of the boy at the time of the last successful fetch
+let routeLastCoords = null;          // [[lng,lat], ...] last known real road path
+let routeLastDestKey = null;         // "lat,lng" of the customer point the last route was drawn to
+
+function routeShouldRefetch(boy){
+  if (!routeLastCoords || !routeLastFetchPos) return true;
+  const movedKm = distanceKmHaversine(boy.lat, boy.lng, routeLastFetchPos.lat, routeLastFetchPos.lng);
+  if (movedKm >= ROUTE_REFETCH_KM) return true;
+  if (Date.now() - routeLastFetchAt >= ROUTE_REFETCH_MS) return true;
+  return false;
+}
+
+/* Fetches the real driving/road path from OSRM and draws it. Falls back to
+   the previous known route (or a straight line, if there's no prior route
+   yet) whenever the request fails — e.g. offline, or the free public OSRM
+   server being briefly unavailable — so the map is never left with no
+   direction line at all just because one fetch didn't land. */
+async function fetchAndDrawRoadRoute(boy){
+  const destKey = `${customer.lat},${customer.lng}`;
+  if (routeFetchInFlight) return;
+  if (destKey === routeLastDestKey && !routeShouldRefetch(boy)) return;
+  routeFetchInFlight = true;
+  try{
+    const url = `${ROUTE_API_BASE}${boy.lng},${boy.lat};${customer.lng},${customer.lat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('route fetch failed: ' + res.status);
+    const data = await res.json();
+    const coords = data && data.routes && data.routes[0] && data.routes[0].geometry && data.routes[0].geometry.coordinates;
+    if (coords && coords.length){
+      routeLastCoords = coords;
+      routeLastFetchPos = { lat: boy.lat, lng: boy.lng };
+      routeLastFetchAt = Date.now();
+      routeLastDestKey = destKey;
+      drawRouteCoords(coords);
+    }
+  } catch(e){
+    // Quietly keep whatever line is already on screen (real road path if we
+    // have one from before, otherwise nothing yet) — a routing hiccup
+    // should never crash tracking or spam the customer with an error.
+    console.warn('Road route fetch failed, keeping last known route', e);
+  } finally {
+    routeFetchInFlight = false;
+  }
+}
+
+function drawRouteCoords(coords){
+  if (!trackMapInstance || !trackMapInstance.getSource || !trackMapInstance.getSource('track-route')) return;
+  trackMapInstance.getSource('track-route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates: coords } });
+  trackMapInstance.setLayoutProperty('track-route-line','visibility','visible');
+}
+
 /* Re-renders (or hides) the floating bar. Cheap — safe to call on every
    customer/orders/deliveryBoys update, and also ticks every 30s on its own
    so the bar flips from "waiting" to "live" right at the cutoff hour even
@@ -3248,8 +3311,20 @@ function updateRouteLine(boy){
   if (!trackMapInstance || !trackMapInstance.getLayer || !trackMapInstance.getLayer('track-route-line')) return;
   const show = boy && isBoyOnline(boy) && isValidLatLng(boy.lat, boy.lng) && isValidLatLng(customer.lat, customer.lng);
   if (show){
-    trackMapInstance.getSource('track-route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates:[[boy.lng, boy.lat],[customer.lng, customer.lat]] } });
-    trackMapInstance.setLayoutProperty('track-route-line','visibility','visible');
+    const destKey = `${customer.lat},${customer.lng}`;
+    // Draw immediately with whatever we already have — the real road path
+    // from the last fetch if there is one (updated in place as the partner
+    // moves), or a straight line as an instant first paint while the very
+    // first real route is still being fetched — so the line never just
+    // stays empty. fetchAndDrawRoadRoute() then swaps it for the actual
+    // road-following path (and keeps it current) in the background.
+    if (routeLastCoords && routeLastDestKey === destKey){
+      drawRouteCoords(routeLastCoords);
+    } else {
+      trackMapInstance.getSource('track-route').setData({ type:'Feature', geometry:{ type:'LineString', coordinates:[[boy.lng, boy.lat],[customer.lng, customer.lat]] } });
+      trackMapInstance.setLayoutProperty('track-route-line','visibility','visible');
+    }
+    fetchAndDrawRoadRoute(boy);
   } else {
     trackMapInstance.setLayoutProperty('track-route-line','visibility','none');
   }
@@ -3501,6 +3576,8 @@ function markRejectionsSeen(){
    Also detects the record being deleted by admin and logs the app out. */
 let custListenerAttachedFor = null;
 let custListenerRef = null;
+let _prevCustStatusForRender = undefined;
+let _prevCompletedAtForRender = undefined;
 let ordersListenerAttachedFor = null;
 let ordersListenerRef = null;
 let overrideListenerAttachedFor = null; // `${custId}:${date}` — date-scoped, see attachTodayOverrideListener
@@ -3615,10 +3692,28 @@ function attachCustomerListener(id){
       status: rec.status || 'pending',
       completedAt: rec.completedAt || null
     };
+    const prevStatus = _prevCustStatusForRender;
+    const prevCompletedAt = _prevCompletedAtForRender;
+    _prevCustStatusForRender = customer.status;
+    _prevCompletedAtForRender = customer.completedAt;
     saveCustomer();
     applyCustomerPriceOverrides(); refreshCatalogUI();
     if ($('#profileSheetOverlay').classList.contains('show')) openProfileSheet();
     refreshLiveTrackBar();
+    // The delivery boy marking today's stop complete (status flips to
+    // 'completed' + a fresh completedAt) doesn't touch webOrders at all —
+    // only this customer-record listener sees it — so without this, "My
+    // Orders"/"Bill" would only turn a delivery green after midnight
+    // instead of the moment it's actually marked delivered. Only re-render
+    // when the relevant fields actually changed, so every unrelated
+    // customer-record update (e.g. a live GPS-adjacent field) doesn't
+    // uselessly rebuild both lists on every tick.
+    if (prevStatus !== customer.status || prevCompletedAt !== customer.completedAt){
+      const openIds = getOpenOrderIds();
+      renderOrders();
+      restoreOpenOrderIds(openIds);
+      renderBill();
+    }
   });
   attachOrdersListener(id);
   attachTodayOverrideListener(id);
@@ -4776,18 +4871,34 @@ function isDateFailed(order, dateStr){
   return !!(order.failedDates && order.failedDates[dateStr]);
 }
 
+/* True once TODAY's delivery has actually been marked complete by the
+   delivery boy (customers/{id}.status === 'completed' with a completedAt
+   timestamp that falls on today's date) — this is written the instant he
+   confirms the checklist/photo in index.html, so it flips green here in
+   real time, well before midnight. Any date before today is always
+   considered delivered regardless of this flag (the day has simply
+   passed). Used everywhere a date/order needs to know "is this actually
+   done" instead of the old, purely date-based check. */
+function isDateEffectivelyDelivered(dateStr){
+  const today = todayISO();
+  if (dateStr < today) return true;
+  if (dateStr === today && customer && customer.status === 'completed' && customer.completedAt){
+    return toISO(new Date(customer.completedAt)) === today;
+  }
+  return false;
+}
+
 /* An order is "Delivered" once every scheduled date across every item in
-   it has already passed (today's date is not yet counted as delivered,
-   only strictly earlier dates) — i.e. there's nothing left pending,
-   active, or stoppable on it. Stopped/rejected dates still count as
-   "passed" here since the order itself has nothing left to run; the whole
-   point is just "is there still something upcoming on this order or not".
-   Orders with no dates at all are never considered delivered. */
+   it counts as delivered per isDateEffectivelyDelivered() above — i.e.
+   there's nothing left pending, active, or stoppable on it. Stopped/
+   rejected dates still count as "passed" here since the order itself has
+   nothing left to run; the whole point is just "is there still something
+   upcoming on this order or not". Orders with no dates at all are never
+   considered delivered. */
 function isOrderDelivered(order){
   const allDates = (order.items||[]).flatMap(it => (it.dates||[]).map(d=>d.date));
   if (!allDates.length) return false;
-  const today = todayISO();
-  return allDates.every(dt => dt < today);
+  return allDates.every(dt => isDateEffectivelyDelivered(dt));
 }
 function orderEffectiveBreakdown(order){
   const itemsTotal = order.items.reduce((s,it)=>{
@@ -4895,7 +5006,7 @@ function renderOrders(){
     const delivered = isOrderDelivered(o);
     const itemsHtml = o.items.map((it,ii)=>{
       const p = prodMap[it.productId];
-      const itemLocked = delivered || it.dates.some(dd=> dd.date < todayISO() || isDateFailed(o, dd.date));
+      const itemLocked = delivered || it.dates.some(dd=> isDateEffectivelyDelivered(dd.date) || isDateFailed(o, dd.date));
       const datesHtml = it.dates.map((dd,di)=>{
         const rejected = isDateRejected(o, dd.date);
         if (rejected){
@@ -4911,7 +5022,7 @@ function renderOrders(){
             <span class="oi-failed-tag">⚠️ Delivery Failed</span>
           </div>`;
         }
-        const isPastDate = dd.date < todayISO();
+        const isPastDate = isDateEffectivelyDelivered(dd.date);
         const stoppable = isDateStoppable(dd.date, customer ? customer.shift : 'morning');
         const actionHtml = isPastDate
           ? `<span class="oi-delivered-tag">✅ Delivered</span>`
@@ -5145,7 +5256,7 @@ function renderBillTimeline(){
     </div>
     ${dates.map((iso, idx)=>{
       const day = map.get(iso);
-      const dayDelivered = iso < todayISO();
+      const dayDelivered = isDateEffectivelyDelivered(iso);
       return `<div class="bill-timeline-card ${idx===0?'open':''} ${day.hasFailed?'failed':(day.hasRejected?'rejected':'')}" data-bill-day-card="${iso}">
         <button class="bill-timeline-head" data-bill-day-toggle="${iso}" aria-expanded="${idx===0?'true':'false'}">
           <div class="bill-date-main">
@@ -5197,7 +5308,7 @@ function renderBillOrders(){
               const stopped = (it.dates||[]).filter(d=>d.stopped).length;
               const rejected = (it.dates||[]).filter(d=>isDateRejected(o,d.date)).length;
               const failed = (it.dates||[]).filter(d=>isDateFailed(o,d.date)).length;
-              const itemDelivered = (it.dates||[]).length>0 && (it.dates||[]).every(d=>d.date<todayISO());
+              const itemDelivered = (it.dates||[]).length>0 && (it.dates||[]).every(d=>isDateEffectivelyDelivered(d.date));
               const dates = (it.dates||[]).slice().sort((a,b)=>a.date.localeCompare(b.date)).map(d=>{
                 if (isDateFailed(o, d.date)) return `<span class="bill-rejected-date">${fmtDate(d.date)} ⚠️</span>`;
                 const r = isDateRejected(o, d.date);
