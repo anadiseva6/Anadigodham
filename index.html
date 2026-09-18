@@ -4996,15 +4996,42 @@ async function removeOrderNoteFromChart(order, dateStr){
    removeOrderNoteFromChart. Includes every item still active on that
    date (dairy or not) with its unit size + qty, e.g. "Curd 0.5 kg x1" —
    matching what syncOrderToChart writes when the order is first placed. */
-async function addOrderNoteToChart(order, dateStr){
+async function syncOrderNoteForDate(order, dateStr){
   const custKey = order.custId;
   if (!custKey) return;
+
   const text = order.items
-    .filter(it => it.dates.some(d=>d.date===dateStr && !d.stopped) && !chartKeyForProductName(it.name))
-    .map(it => chartNoteLine(it)).join(', ');
+    .filter(it =>
+      it.dates.some(d => d.date === dateStr && !d.stopped) &&
+      !chartKeyForProductName(it.name)
+    )
+    .map(it => chartNoteLine(it))
+    .join(', ');
+
+  const noteRef = ref(
+    db,
+    `customers/${custKey}/overrides/${dateStr}/orderNotes/${order.id}`
+  );
+
   try{
-    await update(ref(db, `customers/${custKey}/overrides/${dateStr}`), { [`orderNotes/${order.id}`]: text, updatedAt: Date.now() });
-  } catch(e){ console.error('Note add failed', e); }
+    if (text) {
+      await update(
+        ref(db, `customers/${custKey}/overrides/${dateStr}`),
+        {
+          [`orderNotes/${order.id}`]: text,
+          updatedAt: Date.now()
+        }
+      );
+    } else {
+      await remove(noteRef);
+    }
+  } catch(e){
+    console.error('Note sync failed', e);
+  }
+}
+
+async function addOrderNoteToChart(order, dateStr){
+  await syncOrderNoteForDate(order, dateStr);
 }
 
 $('#successContinueBtn').addEventListener('click', ()=>{
@@ -5157,14 +5184,30 @@ function deleteOrderItem(oi, ii, rowEl){
     if (rowEl){ rowEl.classList.add('removing'); await new Promise(res=>setTimeout(res, 320)); }
     const openIds = getOpenOrderIds();
     try{
-      if (order.custId){
-        for (const d of item.dates){
-          if (!d.stopped) await adjustChartQty(order, item, d.date, true);
-          if (orderDateFullyStopped(order, d.date, ii)) await removeOrderNoteFromChart(order, d.date);
-        }
+  if (order.custId){
+    for (const d of item.dates){
+      if (!d.stopped) {
+        await adjustChartQty(order, item, d.date, true);
       }
-    } catch(e){ console.error('Delete item chart sync failed', e); }
-    order.items.splice(ii,1);
+    }
+  }
+} catch(e){
+  console.error('Delete item chart sync failed', e);
+}
+
+const affectedDates = new Set(item.dates.map(d => d.date));
+
+order.items.splice(ii,1);
+
+try{
+  if (order.custId){
+    for (const dateStr of affectedDates){
+      await syncOrderNoteForDate(order, dateStr);
+    }
+  }
+} catch(e){
+  console.error('Delete item note sync failed', e);
+}
     if (order.items.length===0){
       await removeOrderFromFirebase(order);
       const idx = orders.indexOf(order);
@@ -5206,15 +5249,16 @@ $('#ordersList').addEventListener('click', async e=>{
     refreshLiveTrackBar();
     showToast(d.stopped ? 'Delivery stopped successfully' : 'Delivery resumed successfully');
     try{
-      await adjustChartQty(order, item, d.date, d.stopped);
-      if (d.stopped){
-        if (orderDateFullyStopped(order, d.date)) await removeOrderNoteFromChart(order, d.date);
-      } else {
-        await addOrderNoteToChart(order, d.date);
-      }
-      await pushOrderToFirebase(order);
-    }
-    catch(e){ console.error(e); }
+  await adjustChartQty(order, item, d.date, d.stopped);
+
+  // Update chart note immediately
+  await syncOrderNoteForDate(order, d.date);
+
+  await pushOrderToFirebase(order);
+}
+catch(e){
+  console.error(e);
+}
     return;
   }
   const head = e.target.closest('[data-toggle]');
