@@ -2478,9 +2478,25 @@ function catMedia(c){
   return c ? c.icon : '';
 }
 
-const CHART_PRODUCT_KEY = {
-  p1:'milk', p2:'milk', p3:'paneer', p4:'curd', p5:'ghee', p6:'chach', p7:'butter'
-};
+/* Maps a product's own NAME to one of the 6 fixed dairy columns
+   deliverychart.html pools quantities into (milk/paneer/ghee/chach/butter/
+   curd) — or null if it isn't one of those. Matched by name, not a fixed
+   Firebase product id: admin.html assigns real (often auto-generated)
+   catalog ids, not stable p1..p7 keys, so an id-based lookup silently
+   stops matching the moment products are re-added/reseeded. A product
+   that matches goes straight into its column on the chart; everything
+   that returns null only ever shows up as a note line on that date. */
+function chartKeyForProductName(name){
+  const n = (name||'').toLowerCase();
+  if (!n) return null;
+  if (/chaas|chach|butter\s*milk/.test(n)) return 'chach'; // buttermilk/chaas/chach counts here, not milk or butter
+  if (/\bmilk\b/.test(n)) return 'milk';
+  if (/paneer/.test(n)) return 'paneer';
+  if (/\bghee\b/.test(n)) return 'ghee';
+  if (/\bbutter\b/.test(n)) return 'butter';
+  if (/curd|dahi/.test(n)) return 'curd';
+  return null;
+}
 
 /* One line of chart-note text for a non-dairy item: name, its per-unit
    size/weight (e.g. "0.5 kg", "500 ml"), and how many units were ordered —
@@ -4801,19 +4817,18 @@ async function syncOrderToChart(custKey, order){
   const defaults = custData.defaultProducts || {};
   const overridesRoot = custData.overrides || {};
 
-  // Group increments + note lines per delivery date. Every item gets its
-  // own note line (name + unit size + qty, e.g. "Curd 0.5 kg x1") so the
-  // admin can see exactly what this order contains — even for the 6 fixed
-  // dairy products, which ALSO still bump the pooled day-total field the
-  // delivery boy's pick list relies on. The note is purely for visibility;
-  // it never changes what the pooled quantity fields add up to.
+  // Group increments per delivery date (the 6 fixed dairy products, matched
+  // by name — see chartKeyForProductName) and note lines separately (every
+  // OTHER product, e.g. "Curd 0.5 kg x1"). A dairy product is never also
+  // added as a note line — it lives purely in its own pooled column so the
+  // chart shows one clean number per product instead of a duplicate line.
   const byDate = {};
   order.items.forEach(it=>{
-    const key = CHART_PRODUCT_KEY[it.productId];
+    const key = chartKeyForProductName(it.name);
     it.dates.forEach(d=>{
       if (!byDate[d.date]) byDate[d.date] = { inc:{}, notes:[] };
       if (key) byDate[d.date].inc[key] = (byDate[d.date].inc[key]||0) + it.qty;
-      byDate[d.date].notes.push(chartNoteLine(it));
+      else byDate[d.date].notes.push(chartNoteLine(it));
     });
   });
 
@@ -4915,12 +4930,12 @@ function orderEffectiveTotal(order){
 /* Adds (resuming) or removes (stopping) one item's quantity on one date from
    that customer's Firebase chart override, so deliverychart.html reflects
    the stop/resume immediately. Only works for the 6 fixed dairy products the
-   chart tracks (CHART_PRODUCT_KEY) — other products only ever lived in that
+   chart tracks (chartKeyForProductName, matched by product name) — other products only ever lived in that
    date's note text and can't be safely un-mixed from it, so those are left
    as-is; the app-side price still adjusts either way. */
 async function adjustChartQty(order, item, dateStr, stopping){
   const custKey = order.custId;
-  const key = CHART_PRODUCT_KEY[item.productId];
+  const key = chartKeyForProductName(item.name);
   if (!custKey || !key) return;
   const path = `customers/${custKey}/overrides/${dateStr}`;
   try{
@@ -4969,7 +4984,7 @@ async function addOrderNoteToChart(order, dateStr){
   const custKey = order.custId;
   if (!custKey) return;
   const text = order.items
-    .filter(it => it.dates.some(d=>d.date===dateStr && !d.stopped))
+    .filter(it => it.dates.some(d=>d.date===dateStr && !d.stopped) && !chartKeyForProductName(it.name))
     .map(it => chartNoteLine(it)).join(', ');
   try{
     await update(ref(db, `customers/${custKey}/overrides/${dateStr}`), { [`orderNotes/${order.id}`]: text, updatedAt: Date.now() });
