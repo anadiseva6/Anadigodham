@@ -500,7 +500,7 @@ body::before{content:'';position:fixed; inset:0; z-index:0; pointer-events:none;
    live-tracking bar appears, so its position stays predictable. */
 
 /* ============ LIVE DELIVERY TRACKING — floating bar (slim, centered) ============ */
-#liveTrackBar{position:absolute; left:16px; right:16px; bottom:calc(var(--nav-h) + 12px + var(--safe-b)); z-index:53; display:none; align-items:center; gap:9px; max-width:340px; margin:0 auto; background:linear-gradient(135deg,#3D8A04 0%,#1D4501 100%); border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:6px 7px 6px 6px; box-shadow:0 10px 22px rgba(20,50,4,.32), 0 2px 6px rgba(20,50,4,.2); cursor:pointer; animation:trackBarIn .32s var(--ease); transition:transform .32s var(--ease), opacity .32s var(--ease);}
+#liveTrackBar{position:absolute; left:16px; right:16px; bottom:calc(var(--nav-h) + 12px + var(--safe-b)); z-index:53; display:none; align-items:center; gap:9px; max-width:273px; margin:0 auto; background:linear-gradient(135deg,#3D8A04 0%,#1D4501 100%); border:1px solid rgba(255,255,255,.14); border-radius:999px; padding:6px 7px 6px 6px; box-shadow:0 10px 22px rgba(20,50,4,.32), 0 2px 6px rgba(20,50,4,.2); cursor:pointer; animation:trackBarIn .32s var(--ease); transition:transform .32s var(--ease), opacity .32s var(--ease);}
 #liveTrackBar.show{display:flex;}
 /* Smooth close: instead of the bar being yanked away instantly (old
    classList.remove('show') just set display:none with no transition), we
