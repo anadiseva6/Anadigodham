@@ -3891,11 +3891,11 @@ function nextBookableDate(shift){
 /* Single source of truth for delivery pricing — used by the cart screen,
    order placement, My Orders and Bill, so the ₹10-below-₹99 rule (and the
    amount itself) can never drift out of sync between screens again. */
-const FREE_DELIVERY_THRESHOLD = 99;
-const DELIVERY_FEE = 10;
+const FREE_DELIVERY_THRESHOLD = 0;
+const DELIVERY_FEE = 0;
+
 function deliveryChargeFor(itemsTotal){
-  if (itemsTotal <= 0) return 0; // nothing to deliver -> no delivery fee
-  return itemsTotal >= FREE_DELIVERY_THRESHOLD ? 0 : DELIVERY_FEE;
+  return 0;
 }
 /* Delivery charge must be decided PER DELIVERY DATE, not on the combined
    value of every scheduled date lumped together — a ₹40 item scheduled on
@@ -4342,7 +4342,7 @@ function renderCart(){
   $('#cartFooter').style.display='block';
   let html = `<div class="cart-delivery-banner">
     <div class="cart-delivery-icon">🌿</div>
-    <div><b>Free delivery</b><span>on orders above ₹99</span></div>
+    <div><b>Free delivery</b><span>Purity Means Anadi Godham</span></div>
     <div class="cart-truck">🚚</div>
   </div>`;
   cart.forEach((c,idx)=>{
