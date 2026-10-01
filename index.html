@@ -5948,27 +5948,47 @@ if ('serviceWorker' in navigator){
 })();
 
 /* ================= PROMO POPUP =================
-   Controlled from admin.html -> Popup tab (catalog/popup). Slides up from the
-   bottom once the app + catalog are ready. Cross / tap outside closes it;
-   tapping the popup opens the chosen category or product page. */
+   Controlled from admin.html -> Popup tab (catalog/popups/{id}). On every app
+   open ONE random enabled popup is picked (never the same one twice in a row
+   when there is a choice) and slides up from the bottom. Cross / tap outside
+   closes it; tapping the popup opens the chosen category or product page. */
 (function(){
-  let POPUP = null, shown = false, scheduled = false, tries = 0;
+  let LIST = [], legacy = null, loaded = {a:false, b:false};
+  let current = null, shown = false, scheduled = false, tries = 0;
   const el = id => document.getElementById(id);
   const lsGet = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
   const lsSet = (k,v) => { try{ localStorage.setItem(k,v); }catch(e){} };
+  const lsMap = k => { try{ return JSON.parse(lsGet(k) || '{}') || {}; }catch(e){ return {}; } };
 
-  function allowedByFrequency(d){
+  function allowed(d){
     const v = String(d.version || 0);
-    if (d.freq === 'once') return lsGet('ag_promo_once') !== v;
-    if (d.freq === 'daily') return lsGet('ag_promo_day') !== v + '|' + todayISO();
-    return true;                       // 'always' = every app open
+    if (d.freq === 'once') return lsMap('ag_promo_once')[d.id] !== v;
+    if (d.freq === 'daily') return lsMap('ag_promo_day')[d.id] !== v + '|' + todayISO();
+    return true;                         // 'always' = may appear on every app open
   }
   function markSeen(d){
     const v = String(d.version || 0);
-    if (d.freq === 'once') lsSet('ag_promo_once', v);
-    if (d.freq === 'daily') lsSet('ag_promo_day', v + '|' + todayISO());
+    if (d.freq === 'once'){ const m = lsMap('ag_promo_once'); m[d.id] = v; lsSet('ag_promo_once', JSON.stringify(m)); }
+    if (d.freq === 'daily'){ const m = lsMap('ag_promo_day'); m[d.id] = v + '|' + todayISO(); lsSet('ag_promo_day', JSON.stringify(m)); }
+    lsSet('ag_promo_last', d.id);
+  }
+  function candidates(){
+    const all = LIST.slice();
+    if (legacy) all.push({...legacy, id:'legacy'});
+    return all.filter(d => d && d.enabled && (d.image || d.title || d.text) && allowed(d));
+  }
+  function pickRandom(){
+    let c = candidates();
+    if (!c.length) return null;
+    if (c.length > 1){
+      const last = lsGet('ag_promo_last');
+      const others = c.filter(d => d.id !== last);
+      if (others.length) c = others;
+    }
+    return c[Math.floor(Math.random() * c.length)];
   }
   function targetValid(d){
+    if (!d) return false;
     if (d.targetType === 'category') return !!(d.targetId && catMap[d.targetId]);
     if (d.targetType === 'product') return !!(d.targetId && prodMap[d.targetId]);
     return false;
@@ -5989,13 +6009,14 @@ if ('serviceWorker' in navigator){
   }
   function showPopup(d){
     shown = true;
+    current = d;
     markSeen(d);
     const img = el('ppImg');
     if (d.image){
       img.style.display = 'block';
       img.onerror = ()=>{ img.style.display = 'none'; };
       img.src = d.image;
-    } else img.style.display = 'none';
+    } else { img.style.display = 'none'; img.removeAttribute('src'); }
     el('ppTitle').textContent = d.title || '';
     el('ppTitle').style.display = d.title ? '' : 'none';
     el('ppText').textContent = d.text || '';
@@ -6016,34 +6037,39 @@ if ('serviceWorker' in navigator){
   el('promoPopup').addEventListener('click', e=>{ if (e.target === el('promoPopup')) closePopup(); });
   el('ppCard').addEventListener('click', e=>{
     if (e.target.closest('#ppClose')) return;
-    const d = POPUP;
+    const d = current;
     closePopup();
     if (d && targetValid(d)) setTimeout(()=>openTarget(d), 260);
   });
 
   function tryShow(){
-    if (shown || scheduled || !POPUP || !POPUP.enabled) return true;
-    if (!(POPUP.image || POPUP.title || POPUP.text)) return true;
-    if (!allowedByFrequency(POPUP)) return true;
+    if (shown || scheduled) return;
+    if (!(loaded.a && loaded.b)) return;                       // wait for both popup nodes
     const pl = document.getElementById('appPreloader');
     const ready = catalogReady.categories && catalogReady.products && (!pl || pl.classList.contains('hide'));
-    if (!ready) return false;
-    if (document.getElementById('loginScreen') && getComputedStyle(document.getElementById('loginScreen')).display !== 'none') return false;
+    if (!ready) return;
+    const ls = document.getElementById('loginScreen');
+    if (ls && getComputedStyle(ls).display !== 'none') return;
+    const d = pickRandom();
     scheduled = true;
-    setTimeout(()=>{ if (!shown && POPUP && POPUP.enabled) showPopup(POPUP); }, 450);
-    return true;
+    if (!d) return;                                            // nothing enabled -> no popup this open
+    setTimeout(()=>showPopup(d), 450);
   }
 
-  onValue(ref(db,'catalog/popup'), snap=>{
-    POPUP = snap.val() || null;
-    if (!POPUP || !POPUP.enabled){ if (el('promoPopup').classList.contains('show')) closePopup(); }
-  }, err=>console.warn('Popup load failed', err));
+  onValue(ref(db,'catalog/popups'), snap=>{
+    const val = snap.val() || {};
+    LIST = Object.entries(val).map(([id,d])=>({...d, id}));
+    loaded.a = true;
+  }, err=>{ console.warn('Popups load failed', err); loaded.a = true; });
+  onValue(ref(db,'catalog/popup'), snap=>{      // older single-popup record, if any
+    legacy = snap.val() || null;
+    loaded.b = true;
+  }, err=>{ loaded.b = true; });
 
-  // wait until the app has finished loading, then show once
   const timer = setInterval(()=>{
     tries++;
     tryShow();
-    if (shown || scheduled || tries > 80) clearInterval(timer);
+    if (scheduled || tries > 100) clearInterval(timer);
   }, 400);
 })();
 </script>
