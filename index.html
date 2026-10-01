@@ -1960,6 +1960,19 @@ body{font-size:14px;background:#EEF1EB;}
 .bill-month-chip.active{background:#1F5C28; border-color:#1F5C28;}
 .bill-month-chip.active .m,.bill-month-chip.active .a{color:#fff;}
 .bill-month-chip.active .tag{background:rgba(255,255,255,.2); color:#fff;}
+
+/* ===== PROMO POPUP (set from admin.html -> Popup tab) ===== */
+#promoPopup{position:absolute; inset:0; z-index:2400; display:none; align-items:flex-end; justify-content:center; background:rgba(12,16,12,0); transition:background .3s ease;}
+#promoPopup.show{display:flex;}
+#promoPopup.in{background:rgba(12,16,12,.58);}
+#promoPopup .pp-card{position:relative; width:100%; max-height:88%; background:#fff; border-radius:26px 26px 0 0; overflow:hidden auto; transform:translateY(105%); transition:transform .42s cubic-bezier(.2,.9,.25,1); box-shadow:0 -14px 40px rgba(0,0,0,.25); padding-bottom:calc(18px + var(--safe-b, 0px)); cursor:pointer; -webkit-overflow-scrolling:touch;}
+#promoPopup.in .pp-card{transform:translateY(0);}
+#promoPopup .pp-img{display:block; width:100%; aspect-ratio:4/3; object-fit:cover; object-position:center; background:#EEF2EC;}
+#promoPopup .pp-body{padding:16px 18px 0;}
+#promoPopup .pp-title{font-family:'Fraunces',serif; font-weight:800; font-size:21px; line-height:1.25; color:#18231A; margin-bottom:6px;}
+#promoPopup .pp-text{font-size:13.5px; line-height:1.55; color:#55645A; white-space:pre-line;}
+#promoPopup .pp-cta{display:block; width:100%; margin-top:16px; border:0; border-radius:14px; padding:13px; font:inherit; font-weight:800; font-size:14px; color:#fff; background:var(--grad-brand, #2F6B35); cursor:pointer;}
+#promoPopup .pp-close{position:absolute; top:12px; right:12px; z-index:2; width:34px; height:34px; border-radius:50%; border:0; background:rgba(15,20,15,.62); color:#fff; font-size:16px; line-height:1; display:flex; align-items:center; justify-content:center; cursor:pointer; backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);}
 </style>
 </head>
 <body>
@@ -2389,6 +2402,18 @@ body{font-size:14px;background:#EEF1EB;}
   </div>
 
   <!-- ---- CONFIRM DIALOG ---- -->
+  <div id="promoPopup" aria-hidden="true">
+    <div class="pp-card" id="ppCard" role="dialog" aria-modal="true">
+      <button class="pp-close" id="ppClose" aria-label="Close">✕</button>
+      <img class="pp-img" id="ppImg" alt="" style="display:none;">
+      <div class="pp-body">
+        <div class="pp-title" id="ppTitle"></div>
+        <div class="pp-text" id="ppText"></div>
+        <button class="pp-cta" id="ppCta" type="button" style="display:none;"></button>
+      </div>
+    </div>
+  </div>
+
   <div class="confirm-overlay" id="confirmOverlay">
     <div class="confirm-sheet">
       <h3 id="confirmTitle">Are you sure?</h3>
@@ -5920,6 +5945,106 @@ if ('serviceWorker' in navigator){
     if (pl) pl.classList.add('hide');
     if (window.__networkLoadingTimer) clearTimeout(window.__networkLoadingTimer);
   };
+})();
+
+/* ================= PROMO POPUP =================
+   Controlled from admin.html -> Popup tab (catalog/popup). Slides up from the
+   bottom once the app + catalog are ready. Cross / tap outside closes it;
+   tapping the popup opens the chosen category or product page. */
+(function(){
+  let POPUP = null, shown = false, scheduled = false, tries = 0;
+  const el = id => document.getElementById(id);
+  const lsGet = k => { try{ return localStorage.getItem(k); }catch(e){ return null; } };
+  const lsSet = (k,v) => { try{ localStorage.setItem(k,v); }catch(e){} };
+
+  function allowedByFrequency(d){
+    const v = String(d.version || 0);
+    if (d.freq === 'once') return lsGet('ag_promo_once') !== v;
+    if (d.freq === 'daily') return lsGet('ag_promo_day') !== v + '|' + todayISO();
+    return true;                       // 'always' = every app open
+  }
+  function markSeen(d){
+    const v = String(d.version || 0);
+    if (d.freq === 'once') lsSet('ag_promo_once', v);
+    if (d.freq === 'daily') lsSet('ag_promo_day', v + '|' + todayISO());
+  }
+  function targetValid(d){
+    if (d.targetType === 'category') return !!(d.targetId && catMap[d.targetId]);
+    if (d.targetType === 'product') return !!(d.targetId && prodMap[d.targetId]);
+    return false;
+  }
+  function closePopup(){
+    const pp = el('promoPopup');
+    pp.classList.remove('in');
+    pp.setAttribute('aria-hidden','true');
+    setTimeout(()=>pp.classList.remove('show'), 380);
+  }
+  function openTarget(d){
+    if (d.targetType === 'category' && catMap[d.targetId]){
+      activeCat = d.targetId;
+      if (activeTab === 'category') renderCategoryTab(); else switchTab('category');
+    } else if (d.targetType === 'product' && prodMap[d.targetId]){
+      openProduct(d.targetId);
+    }
+  }
+  function showPopup(d){
+    shown = true;
+    markSeen(d);
+    const img = el('ppImg');
+    if (d.image){
+      img.style.display = 'block';
+      img.onerror = ()=>{ img.style.display = 'none'; };
+      img.src = d.image;
+    } else img.style.display = 'none';
+    el('ppTitle').textContent = d.title || '';
+    el('ppTitle').style.display = d.title ? '' : 'none';
+    el('ppText').textContent = d.text || '';
+    el('ppText').style.display = d.text ? '' : 'none';
+    const hasTarget = targetValid(d);
+    const cta = el('ppCta');
+    const label = d.btnText || (hasTarget ? 'Abhi dekhein' : '');
+    cta.style.display = label ? '' : 'none';
+    cta.textContent = label;
+    el('ppCard').style.cursor = hasTarget ? 'pointer' : 'default';
+    const pp = el('promoPopup');
+    pp.classList.add('show');
+    pp.setAttribute('aria-hidden','false');
+    requestAnimationFrame(()=>requestAnimationFrame(()=>pp.classList.add('in')));
+  }
+
+  el('ppClose').addEventListener('click', e=>{ e.stopPropagation(); closePopup(); });
+  el('promoPopup').addEventListener('click', e=>{ if (e.target === el('promoPopup')) closePopup(); });
+  el('ppCard').addEventListener('click', e=>{
+    if (e.target.closest('#ppClose')) return;
+    const d = POPUP;
+    closePopup();
+    if (d && targetValid(d)) setTimeout(()=>openTarget(d), 260);
+  });
+
+  function tryShow(){
+    if (shown || scheduled || !POPUP || !POPUP.enabled) return true;
+    if (!(POPUP.image || POPUP.title || POPUP.text)) return true;
+    if (!allowedByFrequency(POPUP)) return true;
+    const pl = document.getElementById('appPreloader');
+    const ready = catalogReady.categories && catalogReady.products && (!pl || pl.classList.contains('hide'));
+    if (!ready) return false;
+    if (document.getElementById('loginScreen') && getComputedStyle(document.getElementById('loginScreen')).display !== 'none') return false;
+    scheduled = true;
+    setTimeout(()=>{ if (!shown && POPUP && POPUP.enabled) showPopup(POPUP); }, 450);
+    return true;
+  }
+
+  onValue(ref(db,'catalog/popup'), snap=>{
+    POPUP = snap.val() || null;
+    if (!POPUP || !POPUP.enabled){ if (el('promoPopup').classList.contains('show')) closePopup(); }
+  }, err=>console.warn('Popup load failed', err));
+
+  // wait until the app has finished loading, then show once
+  const timer = setInterval(()=>{
+    tries++;
+    tryShow();
+    if (shown || scheduled || tries > 80) clearInterval(timer);
+  }, 400);
 })();
 </script>
 </body>
