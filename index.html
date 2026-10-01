@@ -1941,6 +1941,25 @@ body{font-size:14px;background:#EEF1EB;}
   color: var(--brand-dark);
   flex-shrink: 0;
 }
+
+/* ===== BANNER: swipeable + fixed aspect ratio (same crop on every screen) ===== */
+.banner-carousel{aspect-ratio:2/1; height:auto;}
+.banner-track{height:100%; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory; -webkit-overflow-scrolling:touch; overscroll-behavior-x:contain; scrollbar-width:none; transition:none; transform:none !important; touch-action:pan-x pan-y;}
+.banner-track::-webkit-scrollbar{display:none;}
+.banner-slide{flex:0 0 100%; width:100%; min-height:0 !important; height:100%; scroll-snap-align:start; scroll-snap-stop:always; background-size:cover !important; background-position:center center !important; background-repeat:no-repeat !important;}
+.banner-dots i{cursor:pointer;}
+.banner-dots{z-index:3;}
+
+/* ===== BILL: month selector ===== */
+.bill-months{display:flex; gap:8px; overflow-x:auto; padding:2px 1px 10px; margin:0 0 4px; scrollbar-width:none; -webkit-overflow-scrolling:touch;}
+.bill-months::-webkit-scrollbar{display:none;}
+.bill-month-chip{flex:0 0 auto; min-width:92px; border:1px solid #DEE7DA; background:#fff; border-radius:13px; padding:8px 12px; text-align:left; font:inherit; cursor:pointer; transition:all .2s var(--ease);}
+.bill-month-chip .m{font-size:11.5px; font-weight:800; color:#223025; white-space:nowrap;}
+.bill-month-chip .a{font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:700; color:#6E7B70; margin-top:2px;}
+.bill-month-chip .tag{display:inline-block; font-size:8px; font-weight:800; letter-spacing:.04em; color:#1F5C28; background:#EAF5E7; border-radius:5px; padding:1px 5px; margin-left:5px; vertical-align:1px;}
+.bill-month-chip.active{background:#1F5C28; border-color:#1F5C28;}
+.bill-month-chip.active .m,.bill-month-chip.active .a{color:#fff;}
+.bill-month-chip.active .tag{background:rgba(255,255,255,.2); color:#fff;}
 </style>
 </head>
 <body>
@@ -2193,6 +2212,7 @@ body{font-size:14px;background:#EEF1EB;}
       <!-- ---- BILL TAB ---- -->
       <section class="tab-pane" id="tab-bill">
         <div class="bill-hero" id="billHero"></div>
+        <div class="bill-months" id="billMonths" aria-label="Select month"></div>
         <div class="bill-viewbar" aria-label="Purchase details view">
           <button class="bill-view-btn active" data-bill-view="timeline">Timeline</button>
           <button class="bill-view-btn" data-bill-view="orders">Orders</button>
@@ -4081,26 +4101,58 @@ function ctaMarkup(id, size){ // size: 'sm' or 'lg'
 
 /* ================= RENDER: HOME ================= */
 function renderBanners(){
-  if (!BANNERS.length){ $('#bannerTrack').innerHTML=''; $('#bannerDots').innerHTML=''; clearInterval(bannerTimer); return; }
-  $('#bannerTrack').innerHTML = BANNERS.map(b=>`
-    <div class="banner-slide" style="background:${b.image?`url('${b.image}') center/cover no-repeat`:b.grad}">
+  const track=$('#bannerTrack');
+  if (!BANNERS.length){ track.innerHTML=''; $('#bannerDots').innerHTML=''; clearInterval(bannerTimer); return; }
+  track.innerHTML = BANNERS.map(b=>`
+    <div class="banner-slide" style="background:${b.image?`url('${b.image}') center center/cover no-repeat`:b.grad}">
       ${b.image?'<div class="banner-scrim"></div>':''}
       <div class="banner-eyebrow">${b.eyebrow}</div>
       <div class="banner-title">${b.title}</div>
       <div class="banner-sub">${b.sub}</div>
     </div>`).join('');
-  $('#bannerDots').innerHTML = BANNERS.map((_,i)=>`<i class="${i===0?'active':''}"></i>`).join('');
+  $('#bannerDots').innerHTML = BANNERS.map((_,i)=>`<i data-bn="${i}" class="${i===0?'active':''}"></i>`).join('');
   bannerIndex = 0;
+  track.scrollLeft = 0;
+  if (!track._bound){
+    track._bound = true;
+    let raf = 0;
+    track.addEventListener('scroll', ()=>{
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(()=>{
+        const w = track.clientWidth; if (!w) return;
+        const idx = Math.round(track.scrollLeft / w);
+        if (idx !== bannerIndex){ bannerIndex = idx; paintBannerDots(); }
+      });
+    }, {passive:true});
+    // finger / mouse down = pause auto-scroll, resume after the user lets go
+    ['touchstart','pointerdown','mouseenter'].forEach(ev=>track.addEventListener(ev, ()=>clearInterval(bannerTimer), {passive:true}));
+    ['touchend','touchcancel','pointerup','mouseleave'].forEach(ev=>track.addEventListener(ev, ()=>startBannerAuto(), {passive:true}));
+    $('#bannerDots').addEventListener('click', e=>{
+      const d = e.target.closest('[data-bn]'); if (!d) return;
+      goBanner(+d.dataset.bn); startBannerAuto();
+    });
+    window.addEventListener('resize', ()=>{ track.scrollTo({left: bannerIndex*track.clientWidth, behavior:'auto'}); });
+  }
   startBannerAuto();
 }
-function goBanner(i){
-  bannerIndex = (i+BANNERS.length)%BANNERS.length;
-  $('#bannerTrack').style.transform = `translateX(-${bannerIndex*100}%)`;
+function paintBannerDots(){
   $$('#bannerDots i').forEach((d,idx)=>d.classList.toggle('active', idx===bannerIndex));
+}
+function goBanner(i){
+  const track=$('#bannerTrack'); if (!track || !BANNERS.length) return;
+  bannerIndex = (i+BANNERS.length)%BANNERS.length;
+  const w = track.clientWidth; if (!w) return;
+  track.scrollTo({left: bannerIndex*w, behavior:'smooth'});
+  paintBannerDots();
 }
 function startBannerAuto(){
   clearInterval(bannerTimer);
-  bannerTimer = setInterval(()=>goBanner(bannerIndex+1), 3800);
+  if (BANNERS.length < 2) return;
+  bannerTimer = setInterval(()=>{
+    const track=$('#bannerTrack'); if (!track) return;
+    const w = track.clientWidth; if (!w) return;          // home tab hidden -> skip
+    goBanner(Math.round(track.scrollLeft / w) + 1);
+  }, 3800);
 }
 
 function stockBadgeHtml(p){
@@ -5376,17 +5428,42 @@ function billItemRowHtml(it, delivered){
   </div>`;
 }
 
+let billMonth = null;   // 'YYYY-MM' currently selected in Bill tab
+function monthLabel(ym, long){
+  const d = new Date(ym+'-01T00:00:00');
+  return d.toLocaleDateString('en-IN', long ? {month:'long', year:'numeric'} : {month:'short', year:'numeric'});
+}
+/* Per-month totals: items + delivery charge, using the exact same rules as
+   orderEffectiveBreakdown (stopped / rejected / failed dates are excluded). */
+function billMonthStats(){
+  const map = buildDayWiseMap();
+  const stats = {};
+  const cur = todayISO().slice(0,7);
+  stats[cur] = {ym:cur, days:0, items:0, delivery:0, total:0, hasRejected:false, hasFailed:false, orderIds:new Set()};
+  map.forEach((day, iso)=>{
+    const ym = iso.slice(0,7);
+    const m = stats[ym] || (stats[ym] = {ym, days:0, items:0, delivery:0, total:0, hasRejected:false, hasFailed:false, orderIds:new Set()});
+    m.days++;
+    m.items += day.total;
+    if (day.total > 0) m.delivery += deliveryChargeFor(day.total);
+    if (day.hasRejected) m.hasRejected = true;
+    if (day.hasFailed) m.hasFailed = true;
+    day.items.forEach(it=>m.orderIds.add(it.orderId));
+  });
+  Object.values(stats).forEach(m=>{ m.total = m.items + m.delivery; });
+  return stats;
+}
 function renderBillTimeline(){
   const wrap = $('#billContent');
   const map = buildDayWiseMap();
-  const dates = [...map.keys()].sort().reverse();
+  const dates = [...map.keys()].filter(d=>d.slice(0,7)===billMonth).sort().reverse();
   if (!dates.length){
-    wrap.innerHTML = `<div class="bill-empty-modern"><span class="ic">🧾</span><div class="t">No purchases yet</div><div class="s">Once you place an order, every delivery's full details will show here in a simple timeline.</div></div>`;
+    wrap.innerHTML = `<div class="bill-empty-modern"><span class="ic">🧾</span><div class="t">${monthLabel(billMonth,true)} mein koi delivery nahi</div><div class="s">Is mahine ka koi bill nahi hai. Upar se doosra mahina chuniye.</div></div>`;
     return;
   }
   wrap.innerHTML = `
     <div class="bill-panel-head">
-      <div><div class="bill-panel-title">Purchase timeline</div><div class="bill-panel-sub">Har delivery date ki items aur amount ek jagah</div></div>
+      <div><div class="bill-panel-title">${monthLabel(billMonth,true)}</div><div class="bill-panel-sub">Har delivery date ki items aur amount ek jagah</div></div>
     </div>
     ${dates.map((iso, idx)=>{
       const day = map.get(iso);
@@ -5411,22 +5488,27 @@ function renderBillTimeline(){
 
 function renderBillOrders(){
   const wrap = $('#billContent');
-  if (!orders.length){
-    wrap.innerHTML = `<div class="bill-empty-modern"><span class="ic">📦</span><div class="t">No orders yet</div><div class="s">Your placed orders will show here with a simple summary.</div></div>`;
+  const inM = d => d.date.slice(0,7)===billMonth;
+  const monthOrders = orders.map((o,oi)=>({o,oi})).filter(x=>x.o.items.some(it=>(it.dates||[]).some(inM)));
+  if (!monthOrders.length){
+    wrap.innerHTML = `<div class="bill-empty-modern"><span class="ic">📦</span><div class="t">${monthLabel(billMonth,true)} mein koi order nahi</div><div class="s">Is mahine ki koi delivery nahi hai.</div></div>`;
     return;
   }
   wrap.innerHTML = `
     <div class="bill-panel-head">
-      <div><div class="bill-panel-title">Order history</div><div class="bill-panel-sub">Order amount, products aur delivery dates sab ek card mein</div></div>
+      <div><div class="bill-panel-title">${monthLabel(billMonth,true)} orders</div><div class="bill-panel-sub">Order amount, products aur delivery dates sab ek card mein</div></div>
     </div>
-    ${orders.map((o, oi)=>{
+    ${monthOrders.map(({o:oo, oi}, k)=>{
+      /* view of this order restricted to the selected month */
+      const o = Object.assign({}, oo, {items: oo.items.map(it=>Object.assign({}, it, {dates:(it.dates||[]).filter(inM)})).filter(it=>it.dates.length)});
       const b = orderEffectiveBreakdown(o);
       const activeDates = o.items.reduce((n,it)=>n + (it.dates||[]).filter(d=>!d.stopped && !isDateRejected(o,d.date) && !isDateFailed(o,d.date)).length, 0);
       const orderHasRejected = o.items.some(it=> (it.dates||[]).some(d=> isDateRejected(o, d.date)));
       const orderHasFailed = o.items.some(it=> (it.dates||[]).some(d=> isDateFailed(o, d.date)));
       const delivered = isOrderDelivered(o);
-      return `<div class="bill-order-card ${oi===0?'open':''} ${orderHasRejected?'rejected':''} ${orderHasFailed?'failed':''} ${delivered?'delivered':''}" data-bill-order-card="${o.id}">
-        <button class="bill-order-head" data-bill-order-toggle="${o.id}" aria-expanded="${oi===0?'true':'false'}">
+      const fullOrder = oo;
+      return `<div class="bill-order-card ${k===0?'open':''} ${orderHasRejected?'rejected':''} ${orderHasFailed?'failed':''} ${delivered?'delivered':''}" data-bill-order-card="${o.id}">
+        <button class="bill-order-head" data-bill-order-toggle="${o.id}" aria-expanded="${k===0?'true':'false'}">
           <div class="bill-order-main">
             <div class="bill-order-title">Order #${escapeHtml(o.id)}${orderHasFailed?' <span class="bill-rejected-tag">⚠️ Delivery Failed</span>':(delivered?' <span class="bill-delivered-tag">✅ Delivered</span>':(orderHasRejected?' <span class="bill-rejected-tag">❌ Rejected</span>':''))}</div>
             <div class="bill-order-meta">${new Date(o.placedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})} · ${o.items.length} item${o.items.length===1?'':'s'} · ${activeDates} active date${activeDates===1?'':'s'}</div>
@@ -5462,7 +5544,7 @@ function renderBillOrders(){
               </div>`;
             }).join('')}
             ${orderBreakdownHtml(b)}
-            <button class="row-del-btn" data-delete-order="${oi}" title="${(delivered||orderHasFailed)?'Delivered orders can\u2019t be deleted':'Remove order'}" aria-label="Remove order" ${(delivered||orderHasFailed)?'disabled':''} style="margin:8px 0 0 auto;width:32px;height:32px;">
+            <button class="row-del-btn" data-delete-order="${oi}" title="${(isOrderDelivered(oo)||orderHasAnyFailed(oo))?'Delivered orders can\u2019t be deleted':'Remove order'}" aria-label="Remove order" ${(isOrderDelivered(oo)||orderHasAnyFailed(oo))?'disabled':''} style="margin:8px 0 0 auto;width:32px;height:32px;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
             </button>
           </div>
@@ -5478,24 +5560,37 @@ function renderBillView(){
 }
 
 function renderBill(){
-  const total = orders.reduce((s,o)=>s+orderEffectiveTotal(o),0);
-  const dayMap = buildDayWiseMap();
-  const deliveryDates = dayMap.size;
-  const rejectedDates = [...dayMap.values()].filter(d=>d.hasRejected).length;
-  const failedDates = [...dayMap.values()].filter(d=>d.hasFailed).length;
+  const stats = billMonthStats();
+  const cur = todayISO().slice(0,7);
+  const months = Object.keys(stats).sort().reverse();
+  if (!billMonth || !stats[billMonth]) billMonth = cur;
+  const m = stats[billMonth];
+  const isCur = billMonth === cur;
+  $('#billMonths').innerHTML = months.map(ym=>`
+    <button class="bill-month-chip ${ym===billMonth?'active':''}" data-bill-month="${ym}">
+      <div class="m">${monthLabel(ym)}${ym===cur?'<span class="tag">NOW</span>':''}</div>
+      <div class="a">${money(stats[ym].total)}</div>
+    </button>`).join('');
+  const act = $('#billMonths .active'); if (act && act.scrollIntoView) { try{ act.scrollIntoView({inline:'center', block:'nearest'}); }catch(e){} }
   $('#billHero').innerHTML = `
-    <div class="lbl">CURRENT BILL</div>
-    <div class="amt">${money(total)}</div>
-    <div class="sub">${orders.length} order${orders.length===1?'':'s'} · ${deliveryDates} delivery date${deliveryDates===1?'':'s'}${rejectedDates?` · <span style="color:var(--danger);font-weight:800;">${rejectedDates} rejected</span>`:''}${failedDates?` · <span style="color:var(--danger);font-weight:800;">${failedDates} failed</span>`:''}</div>`;
+    <div class="lbl">${isCur?'CURRENT BILL · ':''}${monthLabel(billMonth,true).toUpperCase()}</div>
+    <div class="amt">${money(m.total)}</div>
+    <div class="sub">${m.orderIds.size} order${m.orderIds.size===1?'':'s'} · ${m.days} delivery date${m.days===1?'':'s'}${m.delivery?` · delivery ${money(m.delivery)}`:''}${m.hasRejected?` · <span style="color:var(--danger);font-weight:800;">rejected dates</span>`:''}${m.hasFailed?` · <span style="color:var(--danger);font-weight:800;">failed dates</span>`:''}</div>`;
   $('#billSummary').innerHTML = `<div class="bill-summary-strip">
-      <div class="bill-stat"><div class="v">${orders.length}</div><div class="k">Orders</div></div>
-      <div class="bill-stat"><div class="v">${deliveryDates}</div><div class="k">Delivery dates</div></div>
-      <div class="bill-stat"><div class="v">${orders.reduce((s,o)=>s+o.items.length,0)}</div><div class="k">Items</div></div>
+      <div class="bill-stat"><div class="v">${m.orderIds.size}</div><div class="k">Orders</div></div>
+      <div class="bill-stat"><div class="v">${m.days}</div><div class="k">Delivery dates</div></div>
+      <div class="bill-stat"><div class="v">${money(m.items)}</div><div class="k">Items total</div></div>
     </div>`;
   renderBillView();
 }
 
 $('#tab-bill').addEventListener('click', e=>{
+  const monthBtn = e.target.closest('[data-bill-month]');
+  if (monthBtn){
+    billMonth = monthBtn.getAttribute('data-bill-month');
+    renderBill();
+    return;
+  }
   const viewBtn = e.target.closest('[data-bill-view]');
   if (viewBtn){
     billView = viewBtn.getAttribute('data-bill-view');
