@@ -2311,6 +2311,7 @@ body{font-size:14px;background:#EEF1EB;}
           <div class="track-partner-mid">
             <div class="track-partner-name" id="trackPartnerName">Delivery Partner</div>
             <div class="track-partner-sub" id="trackPartnerSub">Bringing your fresh delivery to you</div>
+            <div class="track-partner-sub" id="trackPartnerVehicle" style="display:none; font-weight:700;"></div>
           </div>
           <div class="track-actions">
             <a class="track-chat-btn" id="trackChatBtn" href="#" style="display:none;" aria-label="Message delivery partner on WhatsApp"><svg viewBox="0 0 24 24" fill="currentColor" width="17" height="17"><path d="M12.04 2c-5.5 0-9.96 4.46-9.96 9.96 0 1.76.46 3.48 1.34 5L2 22l5.2-1.36a9.9 9.9 0 0 0 4.84 1.23h.01c5.5 0 9.96-4.46 9.96-9.96S17.54 2 12.04 2zm5.87 14.14c-.25.7-1.45 1.37-2 1.46-.51.08-1.15.11-1.86-.12-.43-.14-.98-.32-1.68-.63-2.96-1.28-4.89-4.27-5.04-4.47-.15-.2-1.2-1.6-1.2-3.06 0-1.45.76-2.16 1.03-2.46.27-.3.6-.37.8-.37h.57c.18 0 .43-.07.67.51.25.6.85 2.08.92 2.23.07.15.12.33.02.53-.1.2-.15.32-.3.5-.15.18-.31.4-.44.53-.15.15-.3.31-.13.6.17.3.76 1.25 1.63 2.02 1.12 1 2.06 1.31 2.36 1.46.3.15.47.13.65-.08.18-.2.75-.87.95-1.17.2-.3.4-.25.67-.15.27.1 1.73.82 2.03.97.3.15.5.22.57.35.08.13.08.75-.17 1.45z"/></svg></a>
@@ -2788,8 +2789,21 @@ onValue(ref(db,'deliveryBoys'), snap=>{
   deliveryBoysMap = snap.val() || {};
   if (customer && customer.id && $('#profileSheetOverlay') && $('#profileSheetOverlay').classList.contains('show')) openProfileSheet();
   refreshLiveTrackBar();
-  if (trackScreenOpen) updateTrackScreen();
+  if (trackScreenOpen){
+    const _i = getLiveTrackInfo();
+    if (_i) applyPartnerContact(_i.boy);
+    updateTrackScreen();
+  }
 });
+function partnerPhoneDigits(boy){
+  if (!boy || !boy.phone) return '';
+  const d = String(boy.phone).replace(/\D/g,'').slice(-10);
+  return d.length === 10 ? d : '';
+}
+function partnerVehicleText(boy){
+  if (!boy) return '';
+  return [boy.vehicle, boy.vehicleNo].filter(Boolean).join(' · ');
+}
 function partnerNameFor(assignedTo){
   if (!assignedTo || !deliveryBoysMap[assignedTo]) return null;
   return deliveryBoysMap[assignedTo].name || null;
@@ -3358,6 +3372,22 @@ function setTrackSteps(state){
   if (state !== 'live' && state !== 'arrived') steps[0].classList.add('done');
 }
 
+/* Shows the assigned partner's phone (call + WhatsApp buttons) and vehicle
+   details on the track screen. Called on open and whenever admin edits the
+   delivery boy's record, so changes show up live. */
+function applyPartnerContact(boy){
+  const callBtn = $('#trackCallBtn'), chatBtn = $('#trackChatBtn'), veh = $('#trackPartnerVehicle');
+  const ph = partnerPhoneDigits(boy);
+  if (ph){
+    if (callBtn){ callBtn.href = 'tel:+91'+ph; callBtn.style.display = 'flex'; }
+    if (chatBtn){ chatBtn.href = `https://wa.me/91${ph}`; chatBtn.style.display = 'flex'; }
+  } else {
+    if (callBtn) callBtn.style.display = 'none';
+    if (chatBtn) chatBtn.style.display = 'none';
+  }
+  const vtxt = partnerVehicleText(boy);
+  if (veh){ veh.textContent = vtxt ? '🛵 ' + vtxt : ''; veh.style.display = vtxt ? 'block' : 'none'; }
+}
 function openTrackScreen(){
   const info = getLiveTrackInfo();
   if (!info) return; // bar shouldn't be visible/clickable if this happens, but guard anyway
@@ -3366,14 +3396,7 @@ function openTrackScreen(){
   const headerDate = info.state === 'scheduled' ? info.date : todayISO();
   $('#trackDateHeader').textContent = `${fmtDateLong(headerDate)} · ${customer.shift==='evening' ? '🌆 Evening Shift' : '🌅 Morning Shift'}`;
   $('#trackPartnerName').textContent = (info.boy && info.boy.name) ? info.boy.name : 'Delivery Partner';
-  const callBtn = $('#trackCallBtn'), chatBtn = $('#trackChatBtn');
-  if (info.boy && info.boy.phone && info.state !== 'scheduled'){
-    callBtn.href = 'tel:'+info.boy.phone; callBtn.style.display = 'flex';
-    if (chatBtn){ chatBtn.href = `https://wa.me/91${info.boy.phone}`; chatBtn.style.display = 'flex'; }
-  } else {
-    callBtn.style.display = 'none';
-    if (chatBtn) chatBtn.style.display = 'none';
-  }
+  applyPartnerContact(info.boy);
   $('#trackDateDetail').textContent = fmtDate(headerDate);
   // Fresh open of the screen always starts back in auto-follow mode.
   mapAutoFollow = true;
@@ -5756,6 +5779,9 @@ function openProfileSheet(){
   } else {
     const initial = (customer.name||'A').trim().charAt(0).toUpperCase()||'A';
     const partnerName = partnerNameFor(customer.assignedTo);
+    const partnerBoy = customer.assignedTo ? deliveryBoysMap[customer.assignedTo] : null;
+    const partnerPhone = partnerPhoneDigits(partnerBoy);
+    const partnerVehicle = partnerVehicleText(partnerBoy);
     const shiftLabel = customer.shift==='evening' ? '🌆 Evening Shift' : '🌅 Morning Shift';
     c.innerHTML = `
       <div class="profile-card-hero">
@@ -5765,6 +5791,9 @@ function openProfileSheet(){
       <div class="profile-row"><span class="lbl">🏠 Address</span><span class="val">${escapeHtml(customer.address)}</span></div>
       <div class="profile-row"><span class="lbl">📱 Mobile</span><span class="val">+91 ${escapeHtml(customer.phone)}</span></div>
       <div class="profile-row"><span class="lbl">🛵 Delivery Partner</span><span class="val">${partnerName ? escapeHtml(partnerName) : 'Will be assigned soon'}</span></div>
+      ${partnerPhone ? `<div class="profile-row"><span class="lbl">📞 Partner Phone</span><span class="val">+91 ${partnerPhone}</span></div>` : ''}
+      ${partnerVehicle ? `<div class="profile-row"><span class="lbl">🏍️ Vehicle</span><span class="val">${escapeHtml(partnerVehicle)}</span></div>` : ''}
+      ${partnerPhone ? `<a class="btn btn-primary btn-block" href="tel:+91${partnerPhone}" style="margin-top:12px; display:flex; align-items:center; justify-content:center; gap:8px; text-decoration:none;">📞 Call ${partnerName ? escapeHtml(partnerName) : 'Delivery Partner'}</a>` : ''}
       <div class="profile-row"><span class="lbl">⏰ Shift</span><span class="val">${shiftLabel}</span></div>
       <div style="height:16px;"></div>
       <button class="btn btn-ghost btn-block" id="editProfileBtn" style="margin-bottom:10px;">Edit Name / Address</button>
